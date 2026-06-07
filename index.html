@@ -1,0 +1,579 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>WebMinecraft</title>
+<link rel="icon" href="data:,">
+<style>
+  html, body {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+    background: #000;
+  }
+
+  #minecraft-canvas {
+    width: 100vw;
+    height: 100vh;
+    max-width: none;
+    max-height: none;
+    display: block;
+    background: #000;
+    image-rendering: pixelated;
+  }
+
+  #webminecraft-status {
+    display: none !important;
+  }
+
+</style>
+<canvas id="minecraft-canvas" width="854" height="480"></canvas>
+<script>
+  console.log("[WebBootstrap] page script before bundle");
+  window.__webMinecraftNativeFetch = window.fetch ? window.fetch.bind(window) : null;
+  window.__webMinecraftNativeXMLHttpRequest = window.XMLHttpRequest;
+  (function installPlayerNameBootstrap() {
+    const storageKey = "webminecraft:playerName";
+    const defaultName = "WebPlayer";
+    const sanitizeName = (value) => {
+      const cleaned = String(value || "")
+        .replace(/[^A-Za-z0-9_]/g, "")
+        .slice(0, 16);
+      return /^[A-Za-z0-9_]{3,16}$/.test(cleaned) ? cleaned : "";
+    };
+    const params = new URLSearchParams(location.search);
+    const storedName = (() => {
+      try {
+        return localStorage.getItem(storageKey) || "";
+      } catch (error) {
+        return "";
+      }
+    })();
+    const initialName = sanitizeName(params.get("username")) || sanitizeName(storedName) || defaultName;
+    window.__webMinecraftSanitizePlayerName = sanitizeName;
+    window.__webMinecraftPlayerName = initialName;
+    window.__webMinecraftStartupPlayerName = initialName;
+    try {
+      localStorage.setItem(storageKey, initialName);
+    } catch (error) {
+      console.log("[WebAccount] localStorage unavailable for player name: " + error);
+    }
+  })();
+  (function configureRuntimeFlags() {
+    const params = new URLSearchParams(location.search);
+    const boolFlag = (name, fallback) => {
+      const value = params.get(name);
+      if (value === null) return fallback === true;
+      return value === "1" || value === "true" || value === "yes";
+    };
+    window.__webMinecraftLowEndMode = boolFlag("lowEndMode", window.__webMinecraftLowEndMode);
+    window.__webMinecraftUseCompactVertices = boolFlag("compactVertices", window.__webMinecraftUseCompactVertices);
+    window.__webMinecraftWorkerMeshing = boolFlag("workerMeshing", window.__webMinecraftWorkerMeshing);
+    window.__webMinecraftWebGPUPrototype = boolFlag("webgpuPrototype", window.__webMinecraftWebGPUPrototype);
+    window.__webMinecraftModLiveLinkPrototype = boolFlag("modLiveLinkPrototype", window.__webMinecraftModLiveLinkPrototype);
+    window.__webMinecraftExternalRegistryDryRun = boolFlag("externalRegistryDryRun", false);
+    window.__webMinecraftExternalRegistryLiveMutation = boolFlag("externalRegistryLiveMutation", window.__webMinecraftExternalRegistryLiveMutation !== false);
+    window.__webMinecraftExternalRegistryLiveItemBridge = boolFlag("externalRegistryLiveItemBridge", window.__webMinecraftExternalRegistryLiveItemBridge !== false);
+    window.__webMinecraftTerrainRenderer = params.get("terrainRenderer") || window.__webMinecraftTerrainRenderer || "vanilla";
+    if (window.__webMinecraftLowEndMode) {
+      window.__webMinecraftLowEndCanvasWidth = Number(params.get("lowEndCanvasWidth") || window.__webMinecraftLowEndCanvasWidth || 640);
+      window.__webMinecraftLowEndCanvasHeight = Number(params.get("lowEndCanvasHeight") || window.__webMinecraftLowEndCanvasHeight || 360);
+      window.__webMinecraftLowEndRenderDistance = Number(params.get("lowEndRenderDistance") || window.__webMinecraftLowEndRenderDistance || 4);
+      console.log(
+        "[WebLowEnd] enabled canvas=" +
+          window.__webMinecraftLowEndCanvasWidth +
+          "x" +
+          window.__webMinecraftLowEndCanvasHeight +
+          " renderDistance=" +
+          window.__webMinecraftLowEndRenderDistance
+      );
+    }
+  })();
+  window.addEventListener("error", function (event) {
+    console.error("[WebBootstrap] error", event.message, event.filename, event.lineno, event.colno);
+  });
+  window.addEventListener("unhandledrejection", function (event) {
+    console.error("[WebBootstrap] rejection", event.reason);
+  });
+  (function installEarlyAudioUnlock() {
+    if (window.__webMinecraftEarlyAudioUnlockInstalled) return;
+    window.__webMinecraftEarlyAudioUnlockInstalled = true;
+    window.__webMinecraftEarlyAudioGestureCount = window.__webMinecraftEarlyAudioGestureCount || 0;
+
+    function ensureAudioContext(reason) {
+      const AudioCtor = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtor) return null;
+      let ctx = window.__webMinecraftAudioContext || null;
+      if (!ctx) {
+        try {
+          ctx = new AudioCtor();
+          window.__webMinecraftAudioContext = ctx;
+          console.log("[WebAudio] early AudioContext created reason=" + reason + " sampleRate=" + ctx.sampleRate);
+        } catch (error) {
+          console.log("[WebAudio] early AudioContext failed reason=" + reason + " error=" + error);
+          return null;
+        }
+      }
+      try {
+        if (ctx.state === "suspended" && typeof ctx.resume === "function") {
+          ctx.resume().then(function () {
+            window.__webMinecraftAudioUnlocked = ctx.state === "running";
+            console.log("[WebAudio] early unlock reason=" + reason + " state=" + ctx.state);
+          }).catch(function (error) {
+            console.log("[WebAudio] early unlock failed reason=" + reason + " error=" + error);
+          });
+        } else if (ctx.state === "running") {
+          window.__webMinecraftAudioUnlocked = true;
+        }
+      } catch (error) {
+        console.log("[WebAudio] early unlock exception reason=" + reason + " error=" + error);
+      }
+      return ctx;
+    }
+
+    function unlockFromEvent(event) {
+      window.__webMinecraftEarlyAudioGestureCount++;
+      window.__webMinecraftLastAudioGesture = event && event.type ? event.type : "event";
+      const ctx = ensureAudioContext(window.__webMinecraftLastAudioGesture);
+      if (ctx && !window.__webMinecraftEarlyAudioPrimed) {
+        try {
+          const buffer = ctx.createBuffer(1, 1, Math.max(8000, ctx.sampleRate || 44100));
+          const source = ctx.createBufferSource();
+          source.buffer = buffer;
+          source.connect(ctx.destination);
+          source.start(0);
+          window.__webMinecraftEarlyAudioPrimed = true;
+        } catch (error) {
+          console.log("[WebAudio] early prime failed reason=" + window.__webMinecraftLastAudioGesture + " error=" + error);
+        }
+      }
+    }
+
+    try {
+      document.addEventListener("pointerdown", unlockFromEvent, true);
+      document.addEventListener("mousedown", unlockFromEvent, true);
+      document.addEventListener("keydown", unlockFromEvent, true);
+      document.addEventListener("touchstart", unlockFromEvent, { capture: true, passive: true });
+    } catch (error) {
+      console.log("[WebAudio] early unlock event install failed: " + error);
+    }
+    window.__webMinecraftEnsureEarlyAudioContext = ensureAudioContext;
+  })();
+</script>
+<script>
+  async function loadTeaVmBundle() {
+    const started = Date.now();
+    const cacheBust = new URLSearchParams(location.search).get("cacheBust") || Date.now();
+    const gzUrl = "engine.js.gz?cacheBust=" + encodeURIComponent(cacheBust);
+    const jsUrl = "engine.js?cacheBust=" + encodeURIComponent(cacheBust);
+    let source;
+    if ("DecompressionStream" in window) {
+      console.log("[WebBootstrap] fetching gzip bundle " + gzUrl);
+      const response = await fetch(gzUrl, { cache: "no-store" });
+      if (!response.ok || !response.body) {
+        throw new Error("Failed to fetch gzip bundle: " + response.status);
+      }
+      const stream = response.body.pipeThrough(new DecompressionStream("gzip"));
+      source = await new Response(stream).text();
+      console.log("[WebBootstrap] gzip bundle decompressed bytes=" + source.length + " ms=" + (Date.now() - started));
+    } else {
+      console.log("[WebBootstrap] DecompressionStream unavailable; fetching plain bundle " + jsUrl);
+      const response = await fetch(jsUrl, { cache: "no-store" });
+      if (!response.ok) {
+        throw new Error("Failed to fetch JS bundle: " + response.status);
+      }
+      source = await response.text();
+      console.log("[WebBootstrap] plain bundle fetched bytes=" + source.length + " ms=" + (Date.now() - started));
+    }
+
+    await new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      const blob = new Blob([source + "\n//# sourceURL=/build/teavm/js/WebMinecraft.js"], { type: "application/javascript" });
+      const url = URL.createObjectURL(blob);
+      script.onload = () => {
+        URL.revokeObjectURL(url);
+        resolve();
+      };
+      script.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error("TeaVM bundle script failed to execute"));
+      };
+      script.src = url;
+      document.head.appendChild(script);
+    });
+    console.log("[WebBootstrap] bundle script returned; typeof main=" + typeof main);
+  }
+
+  async function preloadExternalRegistryQueue() {
+    const started = Date.now();
+    const empty = {
+      kind: "external-registry-prebootstrap-queue",
+      modCount: 0,
+      entryCount: 0,
+      spawnEggPlannedCount: 0,
+      externalEntityFactorySpawnEggCandidates: 0,
+      externalEntityRendererBindingCount: 0,
+      externalEntityRendererBindingEntityCount: 0,
+      externalEntityRendererBindingBlockedRoutes: 0,
+      externalEntityRuntimeRendererHookCount: 0,
+      externalEntityObjectModels: [],
+      liveEligibleEntryCount: 0,
+      liveReplaySoundEventCount: 0,
+      liveReplayItemBridgeCount: 0,
+      liveBlockedEntryCount: 0,
+      readyForLiveRuntime: false,
+      mods: []
+    };
+    if (!window.indexedDB) {
+      window.__webMinecraftPreloadedExternalRegistryQueue = Object.assign({}, empty, { error: "IndexedDB unavailable" });
+      console.log("[WebBootstrap] external registry queue unavailable: IndexedDB");
+      return window.__webMinecraftPreloadedExternalRegistryQueue;
+    }
+    try {
+      const db = await new Promise((resolve, reject) => {
+        const open = indexedDB.open("webminecraft-mods", 1);
+        open.onupgradeneeded = (event) => {
+          const db = event.target.result;
+          if (!db.objectStoreNames.contains("mods")) db.createObjectStore("mods", { keyPath: "id" });
+        };
+        open.onerror = (event) => reject(event.target.error || new Error("IndexedDB open failed"));
+        open.onsuccess = (event) => resolve(event.target.result);
+      });
+      const records = await new Promise((resolve, reject) => {
+        const tx = db.transaction(["mods"], "readonly");
+        const request = tx.objectStore("mods").getAll();
+        request.onerror = (event) => reject(event.target.error || new Error("IndexedDB registry queue read failed"));
+        request.onsuccess = (event) => resolve(event.target.result || []);
+      });
+      const mods = [];
+      const importedResourcePack = {};
+      const importedResourceIndex = [];
+      let entryCount = 0;
+      let importedResourceCount = 0;
+      let spawnEggPlannedCount = 0;
+      let externalEntityFactorySpawnEggCandidates = 0;
+      let externalEntityRendererBindingCount = 0;
+      let externalEntityRendererBindingEntityCount = 0;
+      let externalEntityRendererBindingBlockedRoutes = 0;
+      let externalEntityRuntimeRendererHookCount = 0;
+      let externalEntityDimensionHintCount = 0;
+      const externalEntityObjectModels = [];
+      let liveEligibleEntryCount = 0;
+      let liveReplaySoundEventCount = 0;
+      let liveReplayItemBridgeCount = 0;
+      let liveBlockedEntryCount = 0;
+      function registryTargetKind(entry) {
+        const target = String(entry && entry.adapterTarget || "");
+        if (target.indexOf(".SOUND_EVENT") >= 0) return "sound_event";
+        if (target.indexOf(".ENTITY_TYPE") >= 0) return "entity_type";
+        if (target.indexOf(".ITEM") >= 0) return "item";
+        if (target.indexOf(".BLOCK") >= 0) return "block";
+        if (target.indexOf(".MOB_EFFECT") >= 0) return "mob_effect";
+        return "";
+      }
+      function liveReplayKind(entry) {
+        const targetKind = registryTargetKind(entry);
+        const name = String(entry && entry.registryName || "");
+        const kind = String(entry && entry.kind || "");
+        if (targetKind === "sound_event" && name.indexOf(":") > 0) return "sound_event";
+        if (targetKind === "entity_type" && name.indexOf(":") > 0) return "entity_bridge";
+        if (
+          targetKind === "item" &&
+          name.indexOf(":") > 0 &&
+          kind === "constructed_registry_object" &&
+          window.__webMinecraftExternalRegistryLiveItemBridge === true
+        ) return "item_bridge";
+        return "";
+      }
+      for (const record of records) {
+        const registry = record && record.externalRegistryAnalysis;
+        if (!registry) continue;
+        mods.push({
+          id: record.id || "",
+          file: record.name || record.file || "",
+          registry
+        });
+        const resourcePack = record.resourcePack || {};
+        for (const key of Object.keys(resourcePack)) {
+          if (!Object.prototype.hasOwnProperty.call(importedResourcePack, key)) {
+            importedResourceIndex.push(key);
+            importedResourceCount++;
+          }
+          importedResourcePack[key] = resourcePack[key];
+        }
+        entryCount += registry.entryCount || 0;
+        spawnEggPlannedCount += registry.spawnEggPlannedCount || 0;
+        externalEntityFactorySpawnEggCandidates += registry.externalEntityFactorySpawnEggCandidates || 0;
+        externalEntityRendererBindingCount += registry.rendererBindingCount || registry.externalEntityRendererBindingCount || 0;
+        externalEntityRendererBindingEntityCount += registry.rendererBindingEntityCount || registry.externalEntityRendererBindingEntityCount || 0;
+        externalEntityRendererBindingBlockedRoutes += registry.rendererBindingBlockedRouteCount || registry.externalEntityRendererBindingBlockedRoutes || 0;
+        externalEntityRuntimeRendererHookCount += registry.runtimeRendererHookCount || registry.externalEntityRuntimeRendererHookCount || 0;
+        externalEntityDimensionHintCount += registry.entityDimensionHintCount || registry.externalEntityDimensionHintCount || 0;
+        const objectModels = registry.externalEntityObjectModels || [];
+        for (const model of objectModels) {
+          if (externalEntityObjectModels.length < 96) externalEntityObjectModels.push(model);
+        }
+        const entries = registry.entries || [];
+        if (entries.length > 0) {
+          for (const entry of entries) {
+            const liveKind = liveReplayKind(entry);
+            if (liveKind) {
+              liveEligibleEntryCount++;
+              if (liveKind === "sound_event") liveReplaySoundEventCount++;
+              if (liveKind === "item_bridge") liveReplayItemBridgeCount++;
+            } else {
+              liveBlockedEntryCount++;
+            }
+          }
+        } else {
+          liveEligibleEntryCount += registry.liveEligibleEntryCount || 0;
+          liveReplaySoundEventCount += registry.liveReplaySoundEventCount || 0;
+          liveReplayItemBridgeCount += registry.liveReplayItemBridgeCount || 0;
+          liveBlockedEntryCount += registry.liveBlockedEntryCount || 0;
+        }
+      }
+      const liveRequested = window.__webMinecraftExternalRegistryLiveMutation === true && window.__webMinecraftExternalRegistryDryRun === false;
+      importedResourceIndex.sort();
+      window.__webMinecraftImportedResourcePack = importedResourcePack;
+      window.__webMinecraftImportedResourceIndex = importedResourceIndex;
+      window.__webMinecraftImportedResourceRevision = importedResourceCount ? Date.now() : 0;
+      window.__webMinecraftPreloadedExternalRegistryQueue = {
+        kind: "external-registry-prebootstrap-queue",
+        modCount: mods.length,
+        entryCount,
+        spawnEggPlannedCount,
+        externalEntityFactorySpawnEggCandidates,
+        externalEntityRendererBindingCount,
+        externalEntityRendererBindingEntityCount,
+        externalEntityRendererBindingBlockedRoutes,
+        externalEntityRuntimeRendererHookCount,
+        externalEntityDimensionHintCount,
+        externalEntityObjectModels,
+        liveEligibleEntryCount,
+        liveReplaySoundEventCount,
+        liveReplayItemBridgeCount,
+        liveBlockedEntryCount,
+        importedResourceCount,
+        readyForLiveRuntime: liveRequested && liveEligibleEntryCount > 0,
+        mods: mods.slice(0, 32),
+        preloadedAt: Date.now()
+      };
+      console.log(
+        "[WebBootstrap] external registry queue ready mods=" +
+          mods.length +
+          " entries=" +
+          entryCount +
+          " spawnEggs=" +
+          spawnEggPlannedCount +
+          " factoryCandidates=" +
+          externalEntityFactorySpawnEggCandidates +
+          " rendererBindings=" +
+          externalEntityRendererBindingCount +
+          " rendererBindingEntities=" +
+          externalEntityRendererBindingEntityCount +
+          " dimensions=" +
+          externalEntityDimensionHintCount +
+          " eligible=" +
+          liveEligibleEntryCount +
+          " soundEvents=" +
+          liveReplaySoundEventCount +
+          " itemBridge=" +
+          liveReplayItemBridgeCount +
+          " blocked=" +
+          liveBlockedEntryCount +
+          " importedResources=" +
+          importedResourceCount +
+          " ms=" +
+          (Date.now() - started)
+      );
+      return window.__webMinecraftPreloadedExternalRegistryQueue;
+    } catch (error) {
+      window.__webMinecraftPreloadedExternalRegistryQueue = Object.assign({}, empty, { error: String(error && error.message ? error.message : error) });
+      console.log("[WebBootstrap] external registry queue preload failed: " + error);
+      return window.__webMinecraftPreloadedExternalRegistryQueue;
+    }
+  }
+
+  window.__webMinecraftPreloadExternalRegistryQueue = preloadExternalRegistryQueue;
+
+  async function preloadResourceBundles() {
+    const started = Date.now();
+    const cacheBust = new URLSearchParams(location.search).get("cacheBust") || Date.now();
+    const textBundleUrl = "/resources/text-resource-bundle.json?cacheBust=" + encodeURIComponent(cacheBust);
+    async function fetchResourceText(url, timeoutMs, attempts, label) {
+      let lastError = null;
+      for (let attempt = 1; attempt <= attempts; ++attempt) {
+        try {
+          const nativeFetch = window.__webMinecraftNativeFetch;
+          if (nativeFetch) {
+            const controller = "AbortController" in window ? new AbortController() : null;
+            const timeout = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+            try {
+              const response = await nativeFetch(url, {
+                cache: "no-store",
+                signal: controller ? controller.signal : undefined,
+                headers: { "Accept": "application/json" }
+              });
+              if (!response.ok) {
+                throw new Error("status " + response.status);
+              }
+
+              return await response.text();
+            } finally {
+              if (timeout !== null) clearTimeout(timeout);
+            }
+          }
+
+          const NativeXMLHttpRequest = window.__webMinecraftNativeXMLHttpRequest || XMLHttpRequest;
+          const xhr = new NativeXMLHttpRequest();
+          xhr.open("GET", url, false);
+          xhr.overrideMimeType("application/json; charset=utf-8");
+          xhr.send(null);
+          if (!((xhr.status >= 200 && xhr.status < 300) || xhr.status === 0)) {
+            throw new Error("status " + xhr.status);
+          }
+
+          return xhr.responseText || "";
+        } catch (error) {
+          lastError = error;
+          if (attempt < attempts) {
+            console.log("[WebBootstrap] retrying " + label + " attempt=" + (attempt + 1) + " error=" + error);
+            await new Promise((resolve) => setTimeout(resolve, 150 * attempt));
+          }
+        }
+      }
+
+      throw lastError || new Error("failed " + label);
+    }
+    window.__webMinecraftTextResourceBundleLoaded = false;
+    window.__webMinecraftBinaryResourceBundleLoaded = false;
+    window.__webMinecraftBinaryResourceBundleFailed = false;
+    try {
+      let bundle = {};
+      let loadedFromShards = false;
+      const manifestUrl = "/resources/text-resource-bundle-manifest.json?cacheBust=" + encodeURIComponent(cacheBust);
+      const manifest = JSON.parse(await fetchResourceText(manifestUrl, 15000, 3, "text resource manifest") || "{}");
+      if (manifest && Array.isArray(manifest.shards) && manifest.shards.length > 0) {
+        console.log("[WebBootstrap] loading text resource bundle shards count=" + manifest.shards.length);
+        for (const shard of manifest.shards) {
+          const shardStarted = Date.now();
+          const shardUrl = "/resources/" + shard + "?cacheBust=" + encodeURIComponent(cacheBust);
+          const shardText = await fetchResourceText(shardUrl, 60000, 3, "text resource shard " + shard);
+          Object.assign(bundle, JSON.parse(shardText || "{}"));
+          if (manifest.shards.length <= 8 || (manifest.shards.indexOf(shard) + 1) % 4 === 0 || manifest.shards.indexOf(shard) === manifest.shards.length - 1) {
+            console.log(
+              "[WebBootstrap] text resource shard loaded " +
+                shard +
+                " index=" +
+                (manifest.shards.indexOf(shard) + 1) +
+                "/" +
+                manifest.shards.length +
+                " bytes=" +
+                shardText.length +
+                " ms=" +
+                (Date.now() - shardStarted)
+            );
+          }
+        }
+        loadedFromShards = true;
+      }
+
+      if (!loadedFromShards) {
+        console.log("[WebBootstrap] loading text resource bundle " + textBundleUrl);
+        bundle = JSON.parse(await fetchResourceText(textBundleUrl, 90000, 2, "text resource monolith") || "{}");
+      }
+
+      window.__webMinecraftTextResourceBundle = bundle;
+      window.__webMinecraftTextResourceBundleLoaded = true;
+      console.log(
+        "[WebBootstrap] text resource bundle ready entries=" +
+          Object.keys(window.__webMinecraftTextResourceBundle).length +
+          " source=" +
+          (loadedFromShards ? "shards" : "monolith") +
+          " ms=" +
+          (Date.now() - started)
+      );
+    } catch (error) {
+      window.__webMinecraftTextResourceBundleLoaded = false;
+      console.log("[WebBootstrap] text resource bundle preload failed; Java resource bridge will retry error=" + error + " ms=" + (Date.now() - started));
+    }
+    try {
+      const binaryStarted = Date.now();
+      const binaryManifestUrl = "/resources/binary-resource-bundle-manifest.json?cacheBust=" + encodeURIComponent(cacheBust);
+      console.log("[WebBootstrap] loading binary resource bundle manifest " + binaryManifestUrl);
+      const binaryManifest = JSON.parse(await fetchResourceText(binaryManifestUrl, 15000, 3, "binary resource manifest") || "{}");
+      if (!binaryManifest || !Array.isArray(binaryManifest.shards) || binaryManifest.shards.length === 0) {
+        throw new Error("missing binary resource shard manifest");
+      }
+
+      console.log("[WebBootstrap] loading binary resource bundle shards count=" + binaryManifest.shards.length);
+      const binaryBundle = {};
+      let binaryBytes = 0;
+      for (const shard of binaryManifest.shards) {
+        const shardUrl = "/resources/" + shard + "?cacheBust=" + encodeURIComponent(cacheBust);
+        let shardText = "";
+        let lastShardError = null;
+        for (let attempt = 1; attempt <= 3; ++attempt) {
+          try {
+            shardText = await fetchResourceText(shardUrl, 30000, 1, "binary resource shard " + shard);
+            lastShardError = null;
+            break;
+          } catch (error) {
+            lastShardError = error;
+            if (attempt < 3) {
+              console.log("[WebBootstrap] retrying binary resource shard " + shard + " attempt=" + (attempt + 1) + " error=" + error);
+              await new Promise((resolve) => setTimeout(resolve, 100 * attempt));
+            }
+          }
+        }
+
+        if (lastShardError) {
+          throw lastShardError;
+        }
+
+        binaryBytes += shardText.length;
+        Object.assign(binaryBundle, JSON.parse(shardText || "{}"));
+      }
+
+      window.__webMinecraftBinaryResourceBundle = binaryBundle;
+      window.__webMinecraftBinaryResourceBundleLoaded = true;
+      window.__webMinecraftBinaryResourceCache = window.__webMinecraftBinaryResourceCache || {};
+      console.log(
+        "[WebBootstrap] binary resource bundle ready entries=" +
+          Object.keys(window.__webMinecraftBinaryResourceBundle).length +
+          " bytes=" +
+          binaryBytes +
+          " source=shards" +
+          " ms=" +
+          (Date.now() - binaryStarted)
+      );
+    } catch (error) {
+      window.__webMinecraftBinaryResourceBundleLoaded = false;
+      console.log("[WebBootstrap] binary resource bundle preload failed; Java resource bridge will use direct image fetches error=" + error);
+    }
+  }
+
+  function startWebMinecraft() {
+    window.__webMinecraftStartedAt = Date.now();
+    console.log("[WebBootstrap] start requested; readyState=" + document.readyState + " typeof main=" + typeof main);
+    if (typeof main === "function") {
+      main([]);
+      console.log("[WebBootstrap] main invoked");
+    } else if (window.WebMinecraft && typeof window.WebMinecraft.main === "function") {
+      window.WebMinecraft.main([]);
+      console.log("[WebBootstrap] WebMinecraft.main invoked");
+    } else {
+      console.error("TeaVM main export was not found.");
+    }
+  }
+
+  preloadResourceBundles().then(preloadExternalRegistryQueue).then(loadTeaVmBundle).then(() => {
+    const startSoon = () => setTimeout(startWebMinecraft, 0);
+    if (document.readyState !== "complete") {
+      window.addEventListener("load", startSoon, { once: true });
+    } else {
+      startSoon();
+    }
+  }).catch((error) => {
+    console.error("[WebBootstrap] bundle load failed", error);
+  });
+</script>
